@@ -1,0 +1,5 @@
+package_name: demo.package
+repo: https://github.com/example/demo
+test_mode: test
+version: 1.0.0
+graph_image_file: deps.svg
