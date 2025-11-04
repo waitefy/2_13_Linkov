@@ -1,4 +1,5 @@
-import sys, re, urllib.parse
+import sys, re, urllib.parse, urllib.request, io, zipfile
+from xml.etree import ElementTree
 from pathlib import Path
 try:
     import yaml  # pip install pyyaml
@@ -67,6 +68,50 @@ def load_yaml_config(path: str) -> dict:
     return data
 
 
+def fetch_nuspec_from_nuget(repo_url: str, package_name: str, version: str) -> ElementTree.Element:
+    base = repo_url
+    if not base.endswith('/'):
+        base += '/'
+    package_id = package_name.lower()
+    package_version = version.lower()
+    nupkg_url = f'{base}{package_id}/{package_version}/{package_id}.{package_version}.nupkg'
+
+    try:
+        with urllib.request.urlopen(nupkg_url) as resp:
+            data = resp.read()
+    except Exception as e:
+        raise RuntimeError(f'не удалось скачать пакет по URL {nupkg_url}: {e}')
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            nuspec_name = None
+            for name in zf.namelist():
+                if name.lower().endswith('.nuspec'):
+                    nuspec_name = name
+                    break
+            if nuspec_name is None:
+                raise RuntimeError('в пакете не найден .nuspec файл')
+            nuspec_bytes = zf.read(nuspec_name)
+    except Exception as e:
+        raise RuntimeError(f'ошибка распаковки nupkg: {e}')
+
+    try:
+        root = ElementTree.fromstring(nuspec_bytes)
+    except Exception as e:
+        raise RuntimeError(f'ошибка разбора nuspec: {e}')
+    return root
+
+
+def extract_direct_dependencies(nuspec_root: ElementTree.Element):
+    deps = []
+    for dep in nuspec_root.findall('.//{*}dependency'):
+        dep_id = dep.get('id')
+        dep_ver = dep.get('version')
+        if dep_id:
+            deps.append((dep_id, dep_ver))
+    return deps
+
+
 def main():
     scheme = ['package_name', 'repo', 'test_mode', 'version', 'graph_image_file']
     name_re = re.compile(r'^[A-Za-z0-9._\-]+$')
@@ -100,8 +145,35 @@ def main():
             print(f'- {e}', file=sys.stderr)
         sys.exit(2)
 
-    for key in scheme:
-        print(f'{key}={cfg[key]}')
+    # Этап 1: вывод параметров
+    # for key in scheme:
+    #     print(f'{key}={cfg[key]}')
+
+    # Этап 2: получение и вывод прямых зависимостей NuGet
+    repo = cfg['repo']
+    package_name = cfg['package_name']
+    version = cfg['version']
+
+    if not isinstance(repo, str) or not repo.startswith(('http://', 'https://')):
+        print('error: на этапе 2 repo должен быть URL NuGet (http/https)', file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        nuspec_root = fetch_nuspec_from_nuget(repo, package_name, version)
+        deps = extract_direct_dependencies(nuspec_root)
+    except RuntimeError as e:
+        print(f'error: {e}', file=sys.stderr)
+        sys.exit(2)
+
+    print('direct_dependencies:')
+    if not deps:
+        print('\t(нет прямых зависимостей)')
+    else:
+        for dep_id, dep_ver in deps:
+            if dep_ver:
+                print(f'\t{dep_id} {dep_ver}')
+            else:
+                print(f'\t{dep_id}')
 
 
 if __name__ == '__main__':

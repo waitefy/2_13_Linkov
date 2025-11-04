@@ -1,5 +1,5 @@
-package_name: demo.package
-repo: https://github.com/example/demo
+package_name: newtonsoft.json
+repo: https://api.nuget.org/v3-flatcontainer/
 test_mode: test
-version: 1.0.0
+version: 13.0.3
 graph_image_file: deps.svg
