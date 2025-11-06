@@ -1,6 +1,8 @@
 import sys, re, urllib.parse, urllib.request, io, zipfile
 from xml.etree import ElementTree
 from pathlib import Path
+from collections import deque
+
 try:
     import yaml  # pip install pyyaml
 except ImportError:
@@ -112,6 +114,78 @@ def extract_direct_dependencies(nuspec_root: ElementTree.Element):
     return deps
 
 
+def build_dependency_graph_real(repo_url: str, root_name: str, root_version: str):
+    graph = {}
+    visited = set()
+    queue = deque()
+
+    visited.add(root_name.lower())
+    queue.append((root_name, root_version))
+
+    while queue:
+        package_name, version = queue.popleft()
+        try:
+            nuspec_root = fetch_nuspec_from_nuget(repo_url, package_name, version)
+            deps = extract_direct_dependencies(nuspec_root)
+        except RuntimeError as e:
+            print(f'warn: не удалось получить зависимости для {package_name} {version}: {e}', file=sys.stderr)
+            deps = []
+
+        dep_ids = []
+        for dep_id, dep_ver in deps:
+            dep_ids.append(dep_id)
+            key = dep_id.lower()
+            if key in visited:
+                continue
+            visited.add(key)
+            dep_version = dep_ver if dep_ver else root_version
+            queue.append((dep_id, dep_version))
+
+        graph[package_name] = dep_ids
+
+    return graph
+
+
+def load_test_repo_graph(path: Path) -> dict:
+    if not path.exists():
+        raise RuntimeError(f'файл тестового репозитория {path} не найден')
+
+    repo_graph = {}
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if ':' not in line:
+                raise RuntimeError(f'некорректная строка в тестовом репозитории: «{line}»')
+            name, deps_str = line.split(':', 1)
+            name = name.strip()
+            deps = [d.strip() for d in deps_str.split() if d.strip()]
+            repo_graph[name] = deps
+    return repo_graph
+
+
+def build_dependency_graph_test(repo_graph: dict, root_name: str):
+    graph = {}
+    visited = set()
+    queue = deque()
+
+    visited.add(root_name)
+    queue.append(root_name)
+
+    while queue:
+        pkg = queue.popleft()
+        deps = repo_graph.get(pkg, [])
+        graph[pkg] = deps
+        for dep in deps:
+            if dep in visited:
+                continue
+            visited.add(dep)
+            queue.append(dep)
+
+    return graph
+
+
 def main():
     scheme = ['package_name', 'repo', 'test_mode', 'version', 'graph_image_file']
     name_re = re.compile(r'^[A-Za-z0-9._\-]+$')
@@ -145,35 +219,35 @@ def main():
             print(f'- {e}', file=sys.stderr)
         sys.exit(2)
 
-    # Этап 1: вывод параметров
-    # for key in scheme:
-    #     print(f'{key}={cfg[key]}')
-
-    # Этап 2: получение и вывод прямых зависимостей NuGet
-    repo = cfg['repo']
     package_name = cfg['package_name']
+    repo = cfg['repo']
     version = cfg['version']
-
-    if not isinstance(repo, str) or not repo.startswith(('http://', 'https://')):
-        print('error: на этапе 2 repo должен быть URL NuGet (http/https)', file=sys.stderr)
-        sys.exit(2)
-
-    try:
-        nuspec_root = fetch_nuspec_from_nuget(repo, package_name, version)
-        deps = extract_direct_dependencies(nuspec_root)
-    except RuntimeError as e:
-        print(f'error: {e}', file=sys.stderr)
-        sys.exit(2)
-
-    print('direct_dependencies:')
-    if not deps:
-        print('\t(нет прямых зависимостей)')
+    mode = cfg['test_mode']
+    if isinstance(mode, str):
+        mode = mode.strip().lower()
     else:
-        for dep_id, dep_ver in deps:
-            if dep_ver:
-                print(f'\t{dep_id} {dep_ver}')
-            else:
-                print(f'\t{dep_id}')
+        mode = 'real'
+
+    if mode == 'test':
+        try:
+            repo_graph = load_test_repo_graph(Path(repo))
+            graph = build_dependency_graph_test(repo_graph, package_name)
+        except RuntimeError as e:
+            print(f'error: {e}', file=sys.stderr)
+            sys.exit(2)
+    else:
+        if not isinstance(repo, str) or not repo.startswith(('http://', 'https://')):
+            print('error: в режиме real repo должен быть URL NuGet (http/https)', file=sys.stderr)
+            sys.exit(2)
+        graph = build_dependency_graph_real(repo, package_name, version)
+
+    print('dependency_graph:')
+    for node in sorted(graph.keys()):
+        deps = graph[node]
+        if deps:
+            print(f'\t{node}: ' + ', '.join(deps))
+        else:
+            print(f'\t{node}: (нет зависимостей)')
 
 
 if __name__ == '__main__':
