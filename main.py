@@ -186,6 +186,39 @@ def build_dependency_graph_test(repo_graph: dict, root_name: str):
     return graph
 
 
+def compute_load_order(graph: dict, root_name: str):
+    nodes = set(graph.keys())
+    for deps in graph.values():
+        nodes.update(deps)
+
+    indegree = {n: 0 for n in nodes}
+    reverse_adj = {n: [] for n in nodes}
+
+    for node, deps in graph.items():
+        for dep in deps:
+            indegree[node] += 1
+            reverse_adj[dep].append(node)
+
+    queue = deque()
+    for n in nodes:
+        if indegree[n] == 0:
+            queue.append(n)
+
+    order = []
+    while queue:
+        n = queue.popleft()
+        order.append(n)
+        for nxt in reverse_adj[n]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                queue.append(nxt)
+
+    if len(order) != len(nodes):
+        cyclic = [n for n in nodes if indegree[n] > 0]
+        return order, cyclic
+    return order, []
+
+
 def main():
     scheme = ['package_name', 'repo', 'test_mode', 'version', 'graph_image_file']
     name_re = re.compile(r'^[A-Za-z0-9._\-]+$')
@@ -248,6 +281,14 @@ def main():
             print(f'\t{node}: ' + ', '.join(deps))
         else:
             print(f'\t{node}: (нет зависимостей)')
+
+    if mode == 'test':
+        load_order, cyclic = compute_load_order(graph, package_name)
+        print('load_order:')
+        for n in load_order:
+            print(f'\t{n}')
+        if cyclic:
+            print('\t(обнаружен цикл: ' + ', '.join(sorted(cyclic)) + ')')
 
 
 if __name__ == '__main__':
