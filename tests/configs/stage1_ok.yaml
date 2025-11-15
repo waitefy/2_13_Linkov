@@ -1,0 +1,5 @@
+package_name: A
+repo: tests/repos/repo_linear.txt
+test_mode: test
+version: 1.0.0
+graph_image_file: linear.svg

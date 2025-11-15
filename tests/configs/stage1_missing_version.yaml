@@ -1,0 +1,4 @@
+package_name: A
+repo: tests/repos/repo_linear.txt
+test_mode: test
+graph_image_file: missing.svg
