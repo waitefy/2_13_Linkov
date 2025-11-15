@@ -1,0 +1,5 @@
+package_name: Newtonsoft.Json
+repo: https://api.nuget.org/v3-flatcontainer
+test_mode: test
+version: 13.0.3
+graph_image_file: newtonsoft.svg
